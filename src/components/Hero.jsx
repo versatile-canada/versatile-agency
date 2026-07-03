@@ -1,12 +1,12 @@
 import React from 'react'
 import { motion } from 'framer-motion'
-import BlobField from './BlobField'
+import HeroScene from './HeroScene'
 import { fadeUpStagger, staggerChild, buttonTap } from '../lib/animations'
 
 export default function Hero() {
   return (
     <section id="top" className="relative pt-44 pb-28 lg:pt-52 lg:pb-36 overflow-hidden">
-      <BlobField />
+      <HeroScene />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-56 bg-gradient-to-t from-void to-transparent" />
 
       <div className="relative mx-auto max-w-5xl px-6 text-center">
