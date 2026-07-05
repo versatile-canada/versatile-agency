@@ -4,9 +4,10 @@ import * as THREE from 'three'
 /**
  * A real 3D scene (WebGL via three.js) replacing the flat CSS blob field
  * behind the hero. Three organic, noise-displaced glass blobs drift and
- * tumble in space, lit with a fresnel rim glow in the site's signature
- * blue / purple / pink palette, and tilt gently toward the cursor for a
- * subtle sense of depth and parallax.
+ * tumble in space with a soft camera-facing core glow (not a full-surface
+ * fresnel, which was blowing out to white) in the site's signature blue /
+ * purple / pink palette, and tilt gently toward the cursor for a subtle
+ * sense of depth and parallax.
  */
 
 const VERTEX_SHADER = /* glsl */ `
@@ -77,16 +78,18 @@ const VERTEX_SHADER = /* glsl */ `
 
 const FRAGMENT_SHADER = /* glsl */ `
   uniform vec3 uColor;
-  uniform vec3 uColor2;
   varying vec3 vNormal;
   varying vec3 vPosition;
 
   void main() {
     vec3 viewDir = normalize(-vPosition);
-    float fresnel = pow(1.0 - max(dot(vNormal, viewDir), 0.0), 2.2);
-    vec3 core = mix(uColor, uColor2, fresnel);
-    float alpha = clamp(fresnel * 1.15 + 0.06, 0.0, 0.85);
-    gl_FragColor = vec4(core, alpha);
+    float facing = clamp(dot(vNormal, viewDir), 0.0, 1.0);
+    // Soft core glow: bright only where the surface faces the camera
+    // dead-on, fading out toward the silhouette edge — mimics the
+    // original radial-gradient blob rather than lighting the whole sphere.
+    float glow = pow(facing, 2.6);
+    float alpha = glow * 0.42;
+    gl_FragColor = vec4(uColor, alpha);
   }
 `
 
@@ -110,16 +113,19 @@ export default function HeroScene() {
     mount.appendChild(renderer.domElement)
 
     const palette = [
-      { c1: new THREE.Color('#4C6FFF'), c2: new THREE.Color('#8FA4FF') },
-      { c1: new THREE.Color('#A855F7'), c2: new THREE.Color('#C89BFF') },
-      { c1: new THREE.Color('#FF4FA3'), c2: new THREE.Color('#FF9FD1') }
+      new THREE.Color('#4C6FFF'),
+      new THREE.Color('#A855F7'),
+      new THREE.Color('#FF4FA3')
     ]
 
     const blobs = []
+    // Positions mirror the original CSS blob layout: pushed toward the
+    // corners/edges so the center stays clear for the headline, with
+    // enough depth separation (z) that they don't stack into one another.
     const configs = [
-      { pos: [-2.6, 0.9, -1], scale: 2.5, freq: 0.9, amp: 0.45, speed: 0.11 },
-      { pos: [2.7, -0.3, -2.5], scale: 2.9, freq: 0.7, amp: 0.5, speed: 0.08 },
-      { pos: [0.2, -1.6, 0.5], scale: 1.9, freq: 1.1, amp: 0.4, speed: 0.14 }
+      { pos: [-4.4, 1.6, -3], scale: 2.6, freq: 0.8, amp: 0.4, speed: 0.1 },
+      { pos: [4.6, 0.4, -5], scale: 3.1, freq: 0.65, amp: 0.45, speed: 0.07 },
+      { pos: [0.6, -3.4, -2], scale: 2.3, freq: 1.0, amp: 0.38, speed: 0.13 }
     ]
 
     configs.forEach((cfg, i) => {
@@ -131,12 +137,12 @@ export default function HeroScene() {
           uTime: { value: Math.random() * 100 },
           uAmp: { value: cfg.amp },
           uFreq: { value: cfg.freq },
-          uColor: { value: palette[i].c1 },
-          uColor2: { value: palette[i].c2 }
+          uColor: { value: palette[i] }
         },
         transparent: true,
         depthWrite: false,
-        blending: THREE.AdditiveBlending,
+        depthTest: false,
+        blending: THREE.NormalBlending,
         side: THREE.DoubleSide
       })
       const mesh = new THREE.Mesh(geometry, material)
@@ -215,8 +221,8 @@ export default function HeroScene() {
   return (
     <div
       ref={mountRef}
-      className="pointer-events-none absolute inset-0 -z-0"
-      style={{ filter: 'blur(6px)' }}
+      className="pointer-events-none absolute inset-0 -z-0 opacity-70"
+      style={{ filter: 'blur(50px) saturate(62%)' }}
       aria-hidden="true"
     />
   )
