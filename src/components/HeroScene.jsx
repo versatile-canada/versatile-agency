@@ -1,5 +1,25 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import BlobField from './BlobField'
+
+/**
+ * Some environments (VMs, remote desktops, hardware-acceleration-off
+ * browser profiles, certain privacy extensions) don't support WebGL, or
+ * fail silently when creating a context. Rather than leaving a blank
+ * hero background in that case, we detect it up front and fall back to
+ * the CSS blob field, which always renders.
+ */
+function isWebGLAvailable() {
+  try {
+    const canvas = document.createElement('canvas')
+    return !!(
+      window.WebGLRenderingContext &&
+      (canvas.getContext('webgl') || canvas.getContext('experimental-webgl'))
+    )
+  } catch (e) {
+    return false
+  }
+}
 
 /**
  * A real 3D scene (WebGL via three.js) replacing the flat CSS blob field
@@ -95,113 +115,133 @@ const FRAGMENT_SHADER = /* glsl */ `
 
 export default function HeroScene() {
   const mountRef = useRef(null)
+  const [useFallback, setUseFallback] = useState(false)
 
   useEffect(() => {
     const mount = mountRef.current
     if (!mount) return
+    if (!isWebGLAvailable()) {
+      setUseFallback(true)
+      return
+    }
 
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-    const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(45, mount.clientWidth / mount.clientHeight, 0.1, 100)
-    camera.position.set(0, 0, 9)
+    let renderer, scene, camera, blobs, rafId
+    let handlePointerMove, handleResize
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.setSize(mount.clientWidth, mount.clientHeight)
-    renderer.setClearColor(0x000000, 0)
-    mount.appendChild(renderer.domElement)
+    try {
+      scene = new THREE.Scene()
+      camera = new THREE.PerspectiveCamera(45, mount.clientWidth / mount.clientHeight, 0.1, 100)
+      camera.position.set(0, 0, 9)
 
-    const palette = [
-      new THREE.Color('#4C6FFF'),
-      new THREE.Color('#A855F7'),
-      new THREE.Color('#FF4FA3')
-    ]
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+      renderer.setSize(mount.clientWidth, mount.clientHeight)
+      renderer.setClearColor(0x000000, 0)
+      mount.appendChild(renderer.domElement)
 
-    const blobs = []
-    // Positions mirror the original CSS blob layout: pushed toward the
-    // corners/edges so the center stays clear for the headline, with
-    // enough depth separation (z) that they don't stack into one another.
-    const configs = [
-      { pos: [-4.4, 1.6, -3], scale: 2.6, freq: 0.8, amp: 0.4, speed: 0.1 },
-      { pos: [4.6, 0.4, -5], scale: 3.1, freq: 0.65, amp: 0.45, speed: 0.07 },
-      { pos: [0.6, -3.4, -2], scale: 2.3, freq: 1.0, amp: 0.38, speed: 0.13 }
-    ]
+      const palette = [
+        new THREE.Color('#4C6FFF'),
+        new THREE.Color('#A855F7'),
+        new THREE.Color('#FF4FA3')
+      ]
 
-    configs.forEach((cfg, i) => {
-      const geometry = new THREE.IcosahedronGeometry(1, 5)
-      const material = new THREE.ShaderMaterial({
-        vertexShader: VERTEX_SHADER,
-        fragmentShader: FRAGMENT_SHADER,
-        uniforms: {
-          uTime: { value: Math.random() * 100 },
-          uAmp: { value: cfg.amp },
-          uFreq: { value: cfg.freq },
-          uColor: { value: palette[i] }
-        },
-        transparent: true,
-        depthWrite: false,
-        depthTest: false,
-        blending: THREE.NormalBlending,
-        side: THREE.DoubleSide
-      })
-      const mesh = new THREE.Mesh(geometry, material)
-      mesh.position.set(...cfg.pos)
-      mesh.scale.setScalar(cfg.scale)
-      mesh.userData = {
-        speed: cfg.speed,
-        rotX: (Math.random() - 0.5) * 0.15,
-        rotY: (Math.random() - 0.5) * 0.15,
-        floatOffset: Math.random() * Math.PI * 2
-      }
-      scene.add(mesh)
-      blobs.push(mesh)
-    })
+      blobs = []
+      // Positions mirror the original CSS blob layout: pushed toward the
+      // corners/edges so the center stays clear for the headline, with
+      // enough depth separation (z) that they don't stack into one another.
+      const configs = [
+        { pos: [-4.4, 1.6, -3], scale: 2.6, freq: 0.8, amp: 0.4, speed: 0.55 },
+        { pos: [4.6, 0.4, -5], scale: 3.1, freq: 0.65, amp: 0.45, speed: 0.4 },
+        { pos: [0.6, -3.4, -2], scale: 2.3, freq: 1.0, amp: 0.38, speed: 0.65 }
+      ]
 
-    const pointer = { x: 0, y: 0 }
-    const targetRotation = { x: 0, y: 0 }
-
-    const handlePointerMove = (e) => {
-      const rect = mount.getBoundingClientRect()
-      pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
-      pointer.y = ((e.clientY - rect.top) / rect.height) * 2 - 1
-    }
-    window.addEventListener('pointermove', handlePointerMove)
-
-    const handleResize = () => {
-      const w = mount.clientWidth
-      const h = mount.clientHeight
-      camera.aspect = w / h
-      camera.updateProjectionMatrix()
-      renderer.setSize(w, h)
-    }
-    window.addEventListener('resize', handleResize)
-
-    let rafId
-    const clock = new THREE.Clock()
-
-    const animate = () => {
-      const elapsed = clock.getElapsedTime()
-
-      if (!reducedMotion) {
-        blobs.forEach((mesh) => {
-          const { speed, rotX, rotY, floatOffset } = mesh.userData
-          mesh.material.uniforms.uTime.value = elapsed * speed + floatOffset
-          mesh.rotation.x += rotX * 0.01
-          mesh.rotation.y += rotY * 0.01
-          mesh.position.y += Math.sin(elapsed * 0.4 + floatOffset) * 0.0015
+      configs.forEach((cfg, i) => {
+        const geometry = new THREE.IcosahedronGeometry(1, 5)
+        const material = new THREE.ShaderMaterial({
+          vertexShader: VERTEX_SHADER,
+          fragmentShader: FRAGMENT_SHADER,
+          uniforms: {
+            uTime: { value: Math.random() * 100 },
+            uAmp: { value: cfg.amp },
+            uFreq: { value: cfg.freq },
+            uColor: { value: palette[i] }
+          },
+          transparent: true,
+          depthWrite: false,
+          depthTest: false,
+          blending: THREE.NormalBlending,
+          side: THREE.DoubleSide
         })
+        const mesh = new THREE.Mesh(geometry, material)
+        mesh.position.set(...cfg.pos)
+        mesh.scale.setScalar(cfg.scale)
+        mesh.userData = {
+          speed: cfg.speed,
+          rotX: (Math.random() - 0.5) * 0.15,
+          rotY: (Math.random() - 0.5) * 0.15,
+          floatOffset: Math.random() * Math.PI * 2
+        }
+        scene.add(mesh)
+        blobs.push(mesh)
+      })
 
-        targetRotation.x += (pointer.y * 0.15 - targetRotation.x) * 0.03
-        targetRotation.y += (pointer.x * 0.2 - targetRotation.y) * 0.03
-        scene.rotation.x = targetRotation.x
-        scene.rotation.y = targetRotation.y
+      const pointer = { x: 0, y: 0 }
+      const targetRotation = { x: 0, y: 0 }
+
+      handlePointerMove = (e) => {
+        const rect = mount.getBoundingClientRect()
+        pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+        pointer.y = ((e.clientY - rect.top) / rect.height) * 2 - 1
       }
+      window.addEventListener('pointermove', handlePointerMove)
 
-      renderer.render(scene, camera)
-      rafId = requestAnimationFrame(animate)
+      handleResize = () => {
+        const w = mount.clientWidth
+        const h = mount.clientHeight
+        camera.aspect = w / h
+        camera.updateProjectionMatrix()
+        renderer.setSize(w, h)
+      }
+      window.addEventListener('resize', handleResize)
+
+      const clock = new THREE.Clock()
+
+      const animate = () => {
+        const elapsed = clock.getElapsedTime()
+
+        if (!reducedMotion) {
+          blobs.forEach((mesh) => {
+            const { speed, rotX, rotY, floatOffset } = mesh.userData
+            mesh.material.uniforms.uTime.value = elapsed * speed + floatOffset
+            mesh.rotation.x += rotX * 0.018
+            mesh.rotation.y += rotY * 0.018
+            mesh.position.y += Math.sin(elapsed * 0.4 + floatOffset) * 0.003
+          })
+
+          targetRotation.x += (pointer.y * 0.15 - targetRotation.x) * 0.03
+          targetRotation.y += (pointer.x * 0.2 - targetRotation.y) * 0.03
+          scene.rotation.x = targetRotation.x
+          scene.rotation.y = targetRotation.y
+        }
+
+        renderer.render(scene, camera)
+        rafId = requestAnimationFrame(animate)
+      }
+      animate()
+    } catch (err) {
+      // WebGL context creation or shader compilation failed (unsupported
+      // GPU/browser, disabled hardware acceleration, restrictive privacy
+      // settings, etc). Fall back to the CSS blob field so the hero never
+      // ends up with a blank background.
+      console.warn('HeroScene: WebGL rendering unavailable, falling back to CSS background.', err)
+      if (renderer && mount.contains(renderer.domElement)) {
+        mount.removeChild(renderer.domElement)
+      }
+      setUseFallback(true)
+      return
     }
-    animate()
 
     return () => {
       cancelAnimationFrame(rafId)
@@ -218,11 +258,15 @@ export default function HeroScene() {
     }
   }, [])
 
+  if (useFallback) {
+    return <BlobField />
+  }
+
   return (
     <div
       ref={mountRef}
-      className="pointer-events-none absolute inset-0 -z-0 opacity-70"
-      style={{ filter: 'blur(50px) saturate(62%)' }}
+      className="pointer-events-none absolute inset-0 -z-0 opacity-85"
+      style={{ filter: 'blur(50px) saturate(80%)' }}
       aria-hidden="true"
     />
   )
